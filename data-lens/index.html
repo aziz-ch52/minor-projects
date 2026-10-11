@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DataLens — Turn Raw Data Into Clear Decisions</title>
+<meta name="description" content="DataLens: an interactive analytics dashboard built with HTML, CSS and vanilla JavaScript.">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#dashboard">Skip to dashboard</a>
+<header class="nav">
+  <div class="wrap navin">
+    <a class="logo" href="#overview"><i data-lucide="scan-search"></i>DataLens</a>
+    <nav id="menu" class="links" aria-label="Primary">
+      <a href="#overview">Overview</a><a href="#dashboard">Analytics</a><a href="#insights">Insights</a><a href="#about">About</a>
+    </nav>
+    <div class="navr">
+      <button class="icon" id="theme" aria-label="Toggle light/dark theme"><i data-lucide="sun-moon"></i></button>
+      <a class="btn primary hide-s" href="#dashboard" data-go="overview">Launch Dashboard</a>
+      <button class="icon burger" id="burger" aria-label="Open menu" aria-expanded="false" aria-controls="menu"><i data-lucide="menu"></i></button>
+    </div>
+  </div>
+</header>
+
+<main>
+<section id="overview" class="hero">
+  <div class="glow" aria-hidden="true"></div>
+  <div class="wrap herogrid">
+    <div class="reveal">
+      <p class="eyebrow">Data Analytics · Business Intelligence</p>
+      <h1>Your Data Has Answers.<br><span class="grad">Let's Find Them.</span></h1>
+      <p class="lead">Explore performance, uncover hidden patterns, and turn complex datasets into decisions that move your business forward.</p>
+      <div class="cta"><a class="btn primary" href="#dashboard" data-go="overview">Explore Dashboard</a><a class="btn" href="#how">See How It Works</a></div>
+      <ul class="chips"><li><i data-lucide="mouse-pointer-click"></i>Interactive Analytics</li><li><i data-lucide="lightbulb"></i>Smart Insights</li><li><i data-lucide="file-spreadsheet"></i>Flexible Data</li></ul>
+    </div>
+    <div class="preview reveal" aria-hidden="true">
+      <div class="pv-top"><span></span><span></span><span></span></div>
+      <div class="pv-kpis" id="pvKpis"></div>
+      <div class="pv-bars" id="pvBars"></div>
+      <div class="float f1"><i data-lucide="trending-up"></i><b id="pvGrowth">—</b> vs prior period</div>
+      <div class="float f2"><i data-lucide="triangle-alert"></i><b id="pvOut">—</b> outliers flagged</div>
+    </div>
+  </div>
+</section>
+
+<section id="dashboard" class="sec">
+  <div class="wrap">
+    <div class="app">
+      <aside class="side"><nav id="sideNav" aria-label="Dashboard views">
+        <button data-view="overview" class="on"><i data-lucide="layout-dashboard"></i>Overview</button>
+        <button data-view="sales"><i data-lucide="line-chart"></i>Sales Analytics</button>
+        <button data-view="customers"><i data-lucide="users"></i>Customer Insights</button>
+        <button data-view="products"><i data-lucide="package"></i>Product Performance</button>
+        <button data-view="explorer"><i data-lucide="table-2"></i>Data Explorer</button>
+        <button data-view="settings"><i data-lucide="settings"></i>Settings</button>
+      </nav></aside>
+      <div class="main">
+        <div class="top">
+          <div><p class="crumb">DataLens / <span id="crumb">Overview</span></p><h2 id="vtitle">Overview</h2></div>
+          <div class="tools">
+            <select id="dsSel" aria-label="Dataset"><option value="demo">Demo e-commerce (synthetic)</option><option value="imp" disabled>Imported CSV (none yet)</option></select>
+            <select id="rangeSel" aria-label="Date range"><option value="30">Last 30 days</option><option value="60">Last 60 days</option><option value="90" selected>Last 90 days</option><option value="180">Last 180 days</option></select>
+            <select id="catSel" aria-label="Category"><option value="all">All categories</option></select>
+            <input id="q" type="search" placeholder="Search orders…" aria-label="Search orders">
+            <button class="btn" id="refresh"><i data-lucide="refresh-cw"></i>Refresh</button>
+            <button class="btn" id="expCsv"><i data-lucide="download"></i>Records CSV</button>
+            <button class="btn primary" id="expRpt"><i data-lucide="file-text"></i>Export report</button>
+          </div>
+        </div>
+        <p class="note"><i data-lucide="info"></i>All figures come from a synthetic demo dataset generated in your browser. Not real business data.</p>
+        <div id="empty" class="empty" hidden>No records match the current filters. Try a wider date range or clear the search.</div>
+        <div id="kpis" class="kpis panel" data-views="overview,sales"></div>
+        <div class="grid" id="grid">
+          <div class="card panel" data-views="overview,sales"><h3>Revenue over time <small>weekly</small></h3><div class="ch"><canvas id="cRev" role="img" aria-label="Weekly revenue line chart"></canvas></div></div>
+          <div class="card panel" data-views="overview,products"><h3>Revenue by category</h3><div class="ch"><canvas id="cCat" role="img" aria-label="Revenue by category doughnut chart"></canvas></div></div>
+          <div class="card panel" data-views="overview,sales,customers"><h3>Sales by region</h3><div class="ch"><canvas id="cReg" role="img" aria-label="Sales by region bar chart"></canvas></div></div>
+          <div class="card panel" data-views="overview,sales"><h3>Orders by month</h3><div class="ch"><canvas id="cOrd" role="img" aria-label="Orders by month area chart"></canvas></div></div>
+          <div class="card wide panel" data-views="overview,products"><h3>Top-performing products</h3><div class="scroll"><table id="tTop"></table></div></div>
+          <div class="card wide panel" data-views="overview,customers"><h3>Recent transactions</h3><div class="scroll"><table id="tRec"></table></div></div>
+          <div class="card wide panel" data-views="customers"><h3>Segment summary</h3><div class="scroll"><table id="tSeg"></table></div></div>
+          <div class="card wide panel" data-views="explorer">
+            <h3>Data Explorer <small>CSV is parsed locally in your browser — nothing is uploaded</small></h3>
+            <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload a CSV file"><i data-lucide="upload-cloud"></i><p><b>Drop a CSV here</b> or press Enter to browse</p><input type="file" id="file" accept=".csv,text/csv" hidden></div>
+            <div class="meta" id="meta"></div>
+            <div class="row"><input id="exq" type="search" placeholder="Search rows…" aria-label="Search rows"><details class="cols"><summary class="btn">Columns</summary><div id="colList"></div></details><button class="btn" id="exDl"><i data-lucide="download"></i>Download view</button><button class="btn" id="exDemo">Load demo data</button></div>
+            <div class="scroll tall"><table id="exTbl"></table></div>
+            <h3 class="mt">Numeric summary</h3><div class="scroll"><table id="exStats"></table></div>
+          </div>
+          <div class="card wide panel" data-views="settings">
+            <h3>Settings</h3>
+            <div class="row"><button class="btn" id="setTheme">Toggle theme</button><button class="btn" id="setReset">Reset demo dataset</button><button class="btn" id="setClear">Clear imported CSV</button></div>
+            <p class="muted">Theme preference is stored in localStorage. Animations respect your system's reduced-motion setting. Sign-in, sync and AI features are intentionally not included.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="insights" class="sec alt">
+  <div class="wrap"><p class="eyebrow">Smart Insights</p><h2>What the numbers are saying</h2>
+    <p class="lead sm">Rule-based analysis of the active dashboard filters. These are transparent statistical checks, not an AI model. Explanations are hypotheses, not proven causes.</p>
+    <div class="igrid" id="iGrid"></div></div>
+</section>
+
+<section id="features" class="sec"><div class="wrap"><p class="eyebrow">Features</p><h2>Built for real analysis work</h2><div class="fgrid" id="fGrid"></div></div></section>
+
+<section id="how" class="sec alt"><div class="wrap"><p class="eyebrow">How it works</p><h2>Three steps, no backend</h2>
+  <ol class="steps">
+    <li class="reveal"><span>1</span><h3>Import Your Data</h3><p>Upload a supported CSV dataset. It is read by the browser's File API and never leaves your device.</p></li>
+    <li class="reveal"><span>2</span><h3>Explore the Numbers</h3><p>Inspect KPIs, distributions, trends and data quality.</p></li>
+    <li class="reveal"><span>3</span><h3>Discover What Matters</h3><p>Review evidence-based insights and identify what to investigate next.</p></li>
+  </ol></div></section>
+</main>
+
+<footer id="about" class="sec foot">
+  <div class="wrap fgrid2">
+    <div><a class="logo" href="#overview"><i data-lucide="scan-search"></i>DataLens</a><p class="muted">DataLens is a frontend portfolio project exploring dashboards, data-quality checks and rule-based insights. It runs entirely in your browser.</p>
+      <p class="muted"><b>Demo-data disclaimer:</b> the included dataset is synthetic. No real company, customers or results are represented.</p></div>
+    <div><h4>Tech stack</h4><p class="muted">HTML5 · CSS3 · Vanilla JavaScript (ES6+) · Chart.js · Lucide Icons · Inter</p></div>
+    <div><h4>Links</h4><p><a href="#dashboard" data-go="overview">Dashboard</a></p><p><a href="#features">Features</a></p><p><a href="README.md">Documentation</a></p><p><a href="https://github.com/your-username/datalens" rel="noopener">GitHub (placeholder)</a></p><p><a href="https://www.linkedin.com/in/your-profile" rel="noopener">LinkedIn (placeholder)</a></p></div>
+  </div>
+  <p class="wrap copy">DataLens — Built to make data more useful.</p>
+</footer>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
