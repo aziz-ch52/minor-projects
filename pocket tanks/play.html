@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pocket Tanks</title>
+  <style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#0b0f19;color:#e8ecf5;font:600 14px/1.2 system-ui,sans-serif}
+body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}
+#stage{position:relative;width:min(100vw,calc((100vh - 30px) * 5 / 3));aspect-ratio:5/3}
+canvas{width:100%;height:100%;display:block;touch-action:none;border-radius:6px}
+#hud{position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;padding:1.2%}
+.top,.bottom{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.bottom{align-items:flex-end;justify-content:center;flex-wrap:wrap}
+.panel,.stat,.weapons,.center{background:rgba(10,14,25,.7);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:6px 10px}
+.panel{min-width:150px;display:grid;gap:4px;opacity:.65}
+.panel.active{opacity:1;border-color:#ffd54a}
+.panel.right{text-align:right}
+.hp,.bar{height:8px;background:#222a3d;border-radius:4px;overflow:hidden}
+.hp i,.bar i{display:block;height:100%;background:linear-gradient(90deg,#43d17a,#a4e05a);width:100%}
+.bar i{background:linear-gradient(90deg,#ffd54a,#ff5a3c)}
+.stat{min-width:110px;display:grid;gap:4px}
+.stat b{font-size:1.3em;color:#ffd54a}
+.center{text-align:center;display:grid;gap:3px}
+.weapons{display:flex;gap:6px;pointer-events:auto}
+button{pointer-events:auto;font:inherit;color:inherit;background:#1d2640;border:1px solid #3a4770;border-radius:6px;padding:6px 10px;cursor:pointer}
+button.on{background:#ffd54a;color:#111;border-color:#ffd54a}
+#fire{background:#d6402b;border-color:#ff7a5c;padding:10px 22px;font-weight:800}
+#banner{position:absolute;inset:0;margin:auto;width:fit-content;height:fit-content;padding:20px 32px;font-size:1.6em;text-align:center;background:rgba(0,0,0,.8);border:2px solid #ffd54a;border-radius:12px;pointer-events:auto;cursor:pointer}
+#banner[hidden]{display:none}
+.help{font-size:12px;opacity:.55;text-align:center;padding:0 8px}
+
+</style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="game" width="1000" height="600"></canvas>
+    <div id="hud">
+      <div class="top">
+        <div class="panel" id="p1"><b>PLAYER 1</b><div class="hp"><i></i></div><span class="score">0 pts</span></div>
+        <div class="center"><div id="turn"></div><div id="wind"></div></div>
+        <div class="panel right" id="p2"><b>PLAYER 2</b><div class="hp"><i></i></div><span class="score">0 pts</span></div>
+      </div>
+      <div class="bottom">
+        <div class="stat"><span>ANGLE</span><div><b id="angle">45</b>&deg;</div></div>
+        <div class="stat"><span>POWER</span><div><b id="power">50</b></div><div class="bar"><i id="powerBar"></i></div></div>
+        <div class="weapons" id="weapons"></div>
+        <button id="fire">FIRE</button>
+      </div>
+      <div id="banner" hidden></div>
+    </div>
+  </div>
+  <p class="help">&larr;/&rarr; angle &middot; &uarr;/&darr; power &middot; Shift = fine &middot; 1-3 / Tab weapon &middot; Space fire &middot; drag on canvas to aim &middot; R restart</p>
+  <script>
+(() => {
+"use strict";
+// ---- environment/Terrain ----
+/** Destructible terrain stored as a 1D heightmap (value = surface Y, larger = lower). */
+class Terrain {
+  constructor(width, height) {
+    this.width = width;
+    this.height = height;
+    this.heights = new Float32Array(width);
+    this.layer = document.createElement('canvas');
+    this.layer.width = width;
+    this.layer.height = height;
+    this.lctx = this.layer.getContext('2d');
+    this.dirty = true;
+  }
+
+  generate() {
+    const ph = [0, 1, 2].map(() => Math.random() * Math.PI * 2);
+    for (let x = 0; x < this.width; x++) {
+      const t = (x / this.width) * Math.PI * 2;
+      this.heights[x] = this.height * 0.65 + Math.sin(t + ph[0]) * 45 + Math.sin(t * 2.7 + ph[1]) * 28 + Math.sin(t * 6 + ph[2]) * 9;
+    }
+    this.dirty = true;
+  }
+
+  heightAt(x) {
+    return this.heights[Math.max(0, Math.min(this.width - 1, Math.floor(x)))];
+  }
+
+  isSolid(x, y) {
+    return y >= this.heightAt(x);
+  }
+
+  /** Remove a circular crater; columns whose surface is above the blast collapse by the removed chord. */
+  carveExplosion(cx, cy, r) {
+    const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(this.width - 1, Math.ceil(cx + r));
+    for (let x = x0; x <= x1; x++) {
+      const h = Math.sqrt(Math.max(0, r * r - (x - cx) ** 2));
+      if (h === 0) continue;
+      const top = cy - h, bottom = cy + h, s = this.heights[x];
+      if (s >= bottom) continue;                       // blast is in open air above ground
+      this.heights[x] = Math.min(this.height, s >= top ? bottom : s + 2 * h);
+    }
+    this.dirty = true;
+  }
+
+  /** Add a circular mound of dirt (Bunker Builder). */
+  addMound(cx, cy, r) {
+    const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(this.width - 1, Math.ceil(cx + r));
+    for (let x = x0; x <= x1; x++) {
+      const h = Math.sqrt(Math.max(0, r * r - (x - cx) ** 2));
+      if (h === 0) continue;
+      this.heights[x] = Math.max(0, Math.min(this.heights[x], cy - h));
+    }
+    this.dirty = true;
+  }
+
+  draw(ctx) {
+    if (this.dirty) {
+      const c = this.lctx;
+      c.clearRect(0, 0, this.width, this.height);
+      const g = c.createLinearGradient(0, this.height * 0.4, 0, this.height);
+      g.addColorStop(0, '#8a5d36');
+      g.addColorStop(1, '#2f1e10');
+      c.fillStyle = g;
+      c.beginPath();
+      c.moveTo(0, this.height);
+      for (let x = 0; x < this.width; x++) c.lineTo(x, this.heights[x]);
+      c.lineTo(this.width, this.height);
+      c.fill();
+      c.strokeStyle = '#4caf50';
+      c.lineWidth = 4;
+      c.beginPath();
+      for (let x = 0; x < this.width; x++) x ? c.lineTo(x, this.heights[x]) : c.moveTo(x, this.heights[x]);
+      c.stroke();
+      this.dirty = false;
+    }
+    ctx.drawImage(this.layer, 0, 0);
+  }
+}
+
+// ---- engine/Physics ----
+/** Explicit vector physics: gravity, wind force, swept terrain/tank collision. */
+class Physics {
+  constructor({ gravity = 0.15, windScale = 0.0025, maxStep = 2 } = {}) {
+    this.gravity = gravity;
+    this.windScale = windScale;
+    this.maxStep = maxStep;
+  }
+
+  /** Advance one frame. Returns null, or {type:'terrain'|'tank'|'out', tank?}. */
+  step(p, wind, terrain, tanks) {
+    p.vx += wind * this.windScale * p.windFactor;
+    p.vy += this.gravity;
+    const n = Math.max(1, Math.ceil(Math.hypot(p.vx, p.vy) / this.maxStep)); // sub-steps stop tunnelling
+    const sx = p.vx / n, sy = p.vy / n;
+    for (let i = 0; i < n; i++) {
+      p.x += sx;
+      p.y += sy;
+      if (p.x < 0 || p.x >= terrain.width || p.y >= terrain.height) return { type: 'out' };
+      if (terrain.isSolid(p.x, p.y)) return { type: 'terrain' };
+      for (const t of tanks) {
+        if (t.alive && (t !== p.owner || p.age > 20) && t.contains(p.x, p.y)) return { type: 'tank', tank: t };
+      }
+    }
+    return null;
+  }
+
+  /** Linear-falloff blast damage. Returns [{tank, damage}]. */
+  static radialDamage(tanks, x, y, radius, maxDamage) {
+    const out = [];
+    for (const t of tanks) {
+      if (!t.alive) continue;
+      const reach = radius + 14;
+      const d = Math.hypot(t.x - x, t.y - 10 - y);
+      if (d < reach) out.push({ tank: t, damage: Math.round(maxDamage * (1 - d / reach)) });
+    }
+    return out;
+  }
+}
+
+// ---- engine/InputHandler ----
+/** Captures keyboard + pointer input. Held keys are polled; discrete presses are dispatched. */
+class InputHandler {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.down = new Set();
+    this.handlers = new Map();
+    this.pointer = { down: false, x: 0, y: 0 };
+    const block = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'Tab']);
+
+    addEventListener('keydown', (e) => {
+      if (block.has(e.code)) e.preventDefault();
+      if (e.repeat) return;
+      this.down.add(e.code);
+      (this.handlers.get(e.code) || []).forEach((fn) => fn(e));
+    });
+    addEventListener('keyup', (e) => this.down.delete(e.code));
+    addEventListener('blur', () => this.down.clear());
+
+    canvas.addEventListener('pointerdown', (e) => { this.pointer.down = true; this.#move(e); canvas.setPointerCapture(e.pointerId); });
+    canvas.addEventListener('pointermove', (e) => this.pointer.down && this.#move(e));
+    canvas.addEventListener('pointerup', () => (this.pointer.down = false));
+    canvas.addEventListener('pointercancel', () => (this.pointer.down = false));
+  }
+
+  #move(e) { // client coords -> logical canvas coords
+    const r = this.canvas.getBoundingClientRect();
+    this.pointer.x = ((e.clientX - r.left) / r.width) * this.canvas.width;
+    this.pointer.y = ((e.clientY - r.top) / r.height) * this.canvas.height;
+  }
+
+  isDown(code) { return this.down.has(code); }
+
+  onPress(codes, fn) {
+    for (const c of [].concat(codes)) {
+      if (!this.handlers.has(c)) this.handlers.set(c, []);
+      this.handlers.get(c).push(fn);
+    }
+  }
+}
+
+// ---- engine/GameContext ----
+const STATE = Object.freeze({ AIMING: 'AIMING', FLYING: 'FLYING', SETTLING: 'SETTLING', GAME_OVER: 'GAME_OVER' });
+
+/** Global game state: turn order, scores, wind, state machine. */
+class GameContext {
+  constructor() {
+    this.tanks = [];
+    this.projectiles = [];
+    this.reset();
+  }
+
+  reset() {
+    this.state = STATE.AIMING;
+    this.current = 0;
+    this.scores = [0, 0];
+    this.wind = Math.random() * 20 - 10;
+    this.winner = null;
+    this.projectiles.length = 0;
+  }
+
+  get activeTank() { return this.tanks[this.current]; }
+
+  addScore(index, points) { this.scores[index] += points; }
+
+  nextTurn() {
+    this.current = 1 - this.current;
+    this.wind = Math.max(-10, Math.min(10, this.wind + (Math.random() * 6 - 3)));
+    this.state = STATE.AIMING;
+  }
+
+  endMatch() {
+    const alive = this.tanks.filter((t) => t.alive);
+    this.winner = alive.length === 1 ? alive[0] : null; // null = draw
+    this.state = STATE.GAME_OVER;
+  }
+}
+
+// ---- entities/Tank ----
+class Tank {
+  constructor({ index, x, color, angle }) {
+    this.index = index;
+    this.x = x;
+    this.y = 0;
+    this.color = color;
+    this.angle = angle;      // 0 = right, 90 = up, 180 = left
+    this.power = 50;
+    this.weaponKey = 'standard';
+    this.hp = 100;
+    this.alive = true;
+    this.vy = 0;
+    this.grounded = false;
+    this.tilt = 0;
+  }
+
+  groundY(t) { return Math.min(t.heightAt(this.x - 12), t.heightAt(this.x), t.heightAt(this.x + 12)); }
+
+  snapTo(t) { this.y = this.groundY(t); this.vy = 0; this.grounded = true; }
+
+  /** Gravity-driven settle: tanks fall smoothly when terrain is carved away beneath them. */
+  update(t) {
+    const g = this.groundY(t);
+    this.tilt = Math.atan2(t.heightAt(this.x + 14) - t.heightAt(this.x - 14), 28);
+    if (this.y < g - 0.01) {
+      this.vy = Math.min(this.vy + 0.25, 7);
+      this.y = Math.min(g, this.y + this.vy);
+      this.grounded = this.y >= g - 0.01;
+    } else {
+      this.y = g; // also lifts the tank if terrain was added around it
+      this.vy = 0;
+      this.grounded = true;
+    }
+  }
+
+  adjust(dAngle, dPower) {
+    this.angle = Math.max(0, Math.min(180, this.angle + dAngle));
+    this.power = Math.max(5, Math.min(100, this.power + dPower));
+  }
+
+  muzzle() {
+    const a = (this.angle * Math.PI) / 180;
+    return { x: this.x + Math.cos(a) * 22, y: this.y - 14 - Math.sin(a) * 22 };
+  }
+
+  contains(px, py) { return Math.abs(px - this.x) <= 18 && py >= this.y - 22 && py <= this.y + 2; }
+
+  takeDamage(d) {
+    this.hp = Math.max(0, this.hp - d);
+    if (this.hp === 0) this.alive = false;
+  }
+
+  draw(ctx, active, time) {
+    if (!this.alive) return;
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.tilt);
+    ctx.fillStyle = '#1b1b1b';
+    ctx.fillRect(-18, -8, 36, 8);                       // tracks
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.roundRect(-14, -16, 28, 10, 4);                 // hull
+    ctx.fill();
+    ctx.restore();
+
+    const a = (this.angle * Math.PI) / 180, px = this.x, py = this.y - 13;
+    ctx.strokeStyle = '#222';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px + Math.cos(a) * 22, py - Math.sin(a) * 22);
+    ctx.stroke();
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(px, py, 7, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#0008';
+    ctx.fillRect(this.x - 18, this.y - 34, 36, 4);
+    ctx.fillStyle = this.hp > 40 ? '#4cd964' : '#ff5a3c';
+    ctx.fillRect(this.x - 18, this.y - 34, 36 * (this.hp / 100), 4);
+
+    if (active) {
+      const b = Math.sin(time / 8) * 3;
+      ctx.fillStyle = '#ffd54a';
+      ctx.beginPath();
+      ctx.moveTo(this.x, this.y - 42 + b);
+      ctx.lineTo(this.x - 6, this.y - 52 + b);
+      ctx.lineTo(this.x + 6, this.y - 52 + b);
+      ctx.fill();
+    }
+  }
+}
+
+// ---- entities/Particle ----
+const FIRE = ['#fff3a0', '#ffd54a', '#ff9a2e', '#ff5a3c'];
+const rnd = (a, b) => a + Math.random() * (b - a);
+
+class Particle {
+  constructor(o) {
+    Object.assign(this, { gravity: 0.05, drag: 0.95, size: 3, color: '#fff', ...o });
+    this.maxLife = this.life;
+  }
+  update() {
+    this.vx *= this.drag;
+    this.vy = this.vy * this.drag + this.gravity;
+    this.x += this.vx;
+    this.y += this.vy;
+    this.life--;
+  }
+  draw(ctx) {
+    ctx.globalAlpha = Math.max(0, this.life / this.maxLife);
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+class ParticleSystem {
+  constructor(max = 700) { this.list = []; this.max = max; }
+
+  emit(o) { if (this.list.length < this.max) this.list.push(new Particle(o)); }
+
+  explosion(x, y, r) {
+    for (let i = 0; i < r * 1.2; i++) {
+      const a = rnd(0, Math.PI * 2), s = rnd(0.5, r * 0.12);
+      this.emit({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 0.5, life: rnd(20, 45), size: rnd(2, 6), color: FIRE[(Math.random() * 4) | 0] });
+    }
+    for (let i = 0; i < r * 0.4; i++) {
+      this.emit({ x, y, vx: rnd(-1.5, 1.5), vy: rnd(-2, -0.3), life: rnd(40, 70), size: rnd(4, 9), color: '#555', gravity: -0.02, drag: 0.97 });
+    }
+  }
+
+  dust(x, y, r) {
+    for (let i = 0; i < r; i++) {
+      this.emit({ x: x + rnd(-r, r), y: y + rnd(-r / 2, r / 2), vx: rnd(-1, 1), vy: rnd(-1.5, 0), life: rnd(25, 50), size: rnd(2, 5), color: '#b08a5c' });
+    }
+  }
+
+  puff(x, y) {
+    for (let i = 0; i < 10; i++) this.emit({ x, y, vx: rnd(-1, 1), vy: rnd(-1, 1), life: 20, size: 3, color: '#ddd', gravity: 0 });
+  }
+
+  update() {
+    this.list.forEach((p) => p.update());
+    this.list = this.list.filter((p) => p.life > 0);
+  }
+
+  draw(ctx) {
+    this.list.forEach((p) => p.draw(ctx));
+    ctx.globalAlpha = 1;
+  }
+
+  clear() { this.list.length = 0; }
+}
+
+// ---- entities/Projectile ----
+/** Projectile base class + weapon sub-behaviours + factory. */
+class Projectile {
+  constructor({ x, y, vx, vy, owner, radius = 4, color = '#fff' }) {
+    Object.assign(this, { x, y, vx, vy, owner, radius, color });
+    this.windFactor = 1;
+    this.age = 0;
+    this.dead = false;
+    this.trail = [];
+  }
+
+  update(world) {
+    this.age++;
+    const prevVy = this.vy;
+    const hit = world.physics.step(this, world.game.wind, world.terrain, world.game.tanks);
+    this.trail.push(this.x, this.y);
+    if (this.trail.length > 24) this.trail.splice(0, 2);
+    if (hit) {
+      this.dead = true;
+      if (hit.type !== 'out') this.onImpact(world, hit);
+    } else {
+      this.onMove(world, prevVy);
+    }
+  }
+
+  onMove() {}
+  onImpact() {}
+
+  draw(ctx) {
+    ctx.strokeStyle = 'rgba(255,255,255,.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < this.trail.length; i += 2) i ? ctx.lineTo(this.trail[i], this.trail[i + 1]) : ctx.moveTo(this.trail[i], this.trail[i + 1]);
+    ctx.stroke();
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+class StandardShell extends Projectile {
+  constructor(o) { super({ color: '#ffe066', ...o }); }
+  onImpact(world) { world.explode(this.x, this.y, 34, 35, this.owner); }
+}
+
+class MirvBomblet extends Projectile {
+  constructor(o) { super({ radius: 3, color: '#ff9a2e', ...o }); }
+  onImpact(world) { world.explode(this.x, this.y, 24, 20, this.owner); }
+}
+
+class MirvSplitter extends Projectile {
+  constructor(o) { super({ radius: 5, color: '#ff6ec7', ...o }); this.split = false; }
+
+  onMove(world, prevVy) {
+    if (!this.split && prevVy < 0 && this.vy >= 0) {      // apex of the arc
+      this.split = true;
+      this.dead = true;
+      world.particles.puff(this.x, this.y);
+      for (let i = -1; i <= 1; i++) {
+        world.game.projectiles.push(new MirvBomblet({ x: this.x, y: this.y, vx: this.vx + i * 1.4, vy: this.vy, owner: this.owner }));
+      }
+    }
+  }
+
+  onImpact(world) { world.explode(this.x, this.y, 26, 25, this.owner); } // never reached apex
+}
+
+class BunkerBuilder extends Projectile {
+  constructor(o) { super({ radius: 5, color: '#8bd3ff', ...o }); }
+  onImpact(world) {
+    world.terrain.addMound(this.x, this.y, 40);
+    world.particles.dust(this.x, this.y, 30);
+  }
+}
+
+const WEAPONS = {
+  standard: { name: 'Standard Shell', ctor: StandardShell },
+  mirv: { name: 'Mirv Splitter', ctor: MirvSplitter },
+  bunker: { name: 'Bunker Builder', ctor: BunkerBuilder },
+};
+const WEAPON_ORDER = Object.keys(WEAPONS);
+
+function createProjectile(key, tank) {
+  const m = tank.muzzle(), a = (tank.angle * Math.PI) / 180, speed = tank.power * 0.12;
+  return new WEAPONS[key].ctor({ x: m.x, y: m.y, vx: Math.cos(a) * speed, vy: -Math.sin(a) * speed, owner: tank });
+}
+
+// ---- main ----
+
+
+
+
+
+
+
+const W = 1000, H = 600;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const $ = (id) => document.getElementById(id);
+
+const game = new GameContext();
+const terrain = new Terrain(W, H);
+const particles = new ParticleSystem();
+const physics = new Physics();
+const input = new InputHandler(canvas);
+const world = { game, terrain, particles, physics, explode };
+globalThis.__pocketTanks = { game, terrain }; // debug/test hook
+let time = 0, settleTimer = 0, shake = 0;
+
+/* ---------- HUD: DOM overlay, writes only when a value changes ---------- */
+class Hud {
+  constructor() {
+    this.cache = {};
+    this.panels = [$('p1'), $('p2')];
+    this.buttons = WEAPON_ORDER.map((key, i) => {
+      const b = document.createElement('button');
+      b.textContent = `${i + 1} ${WEAPONS[key].name}`;
+      b.onclick = () => selectWeapon(key);
+      $('weapons').append(b);
+      return b;
+    });
+  }
+  set(k, v, apply) { if (this.cache[k] !== v) { this.cache[k] = v; apply(v); } }
+  update() {
+    const t = game.activeTank, over = game.state === STATE.GAME_OVER;
+    this.set('angle', Math.round(t.angle), (v) => ($('angle').textContent = v));
+    this.set('power', Math.round(t.power), (v) => { $('power').textContent = v; $('powerBar').style.width = v + '%'; });
+    this.set('wind', Math.round(game.wind), (v) => ($('wind').textContent = `WIND ${v < 0 ? '◄' : '►'} ${Math.abs(v)}`));
+    this.set('turn', `${game.state}|${game.current}`, () => {
+      $('turn').textContent = game.state === STATE.AIMING ? `PLAYER ${game.current + 1} — AIM` : over ? 'MATCH OVER' : '…';
+    });
+    this.set('weapon', t.weaponKey, (k) => this.buttons.forEach((b, i) => b.classList.toggle('on', WEAPON_ORDER[i] === k)));
+    game.tanks.forEach((tk, i) => {
+      this.set('hp' + i, tk.hp, (v) => (this.panels[i].querySelector('.hp i').style.width = v + '%'));
+      this.set('sc' + i, game.scores[i], (v) => (this.panels[i].querySelector('.score').textContent = v + ' pts'));
+      this.set('act' + i, game.current === i && !over, (v) => this.panels[i].classList.toggle('active', v));
+    });
+    this.set('banner', over ? (game.winner ? game.winner.index : 'draw') : null, (v) => {
+      $('banner').hidden = v === null;
+      $('banner').innerHTML = v === null ? '' : `${v === 'draw' ? 'DRAW' : `PLAYER ${v + 1} WINS`}<br><small>click or press R to restart</small>`;
+    });
+  }
+}
+const hud = new Hud();
+
+/* ---------- Actions ---------- */
+function selectWeapon(key) { if (game.state === STATE.AIMING) game.activeTank.weaponKey = key; }
+
+function cycleWeapon(e) {
+  const i = WEAPON_ORDER.indexOf(game.activeTank.weaponKey), n = WEAPON_ORDER.length;
+  selectWeapon(WEAPON_ORDER[(i + (e?.shiftKey ? -1 : 1) + n) % n]);
+}
+
+function fire() {
+  if (game.state !== STATE.AIMING) return;
+  const t = game.activeTank, m = t.muzzle();
+  game.projectiles.push(createProjectile(t.weaponKey, t));
+  particles.puff(m.x, m.y);
+  game.state = STATE.FLYING;
+}
+
+function explode(x, y, r, dmg, owner) {
+  terrain.carveExplosion(x, y, r);
+  particles.explosion(x, y, r);
+  shake = Math.max(shake, r * 0.25);
+  for (const { tank, damage } of Physics.radialDamage(game.tanks, x, y, r, dmg)) {
+    const wasAlive = tank.alive;
+    tank.takeDamage(damage);
+    if (tank !== owner) game.addScore(owner.index, damage);
+    if (wasAlive && !tank.alive) particles.explosion(tank.x, tank.y - 10, 55);
+  }
+}
+
+function newMatch() {
+  terrain.generate();
+  game.tanks = [
+    new Tank({ index: 0, x: 120, color: '#4aa3ff', angle: 45 }),
+    new Tank({ index: 1, x: W - 120, color: '#ff6a5a', angle: 135 }),
+  ];
+  game.reset();
+  game.tanks.forEach((t) => t.snapTo(terrain));
+  particles.clear();
+}
+
+input.onPress('Space', fire);
+input.onPress('Enter', fire);
+input.onPress('Tab', cycleWeapon);
+input.onPress('KeyR', () => game.state === STATE.GAME_OVER && newMatch());
+WEAPON_ORDER.forEach((k, i) => input.onPress('Digit' + (i + 1), () => selectWeapon(k)));
+$('fire').onclick = fire;
+$('banner').onclick = newMatch;
+
+/* ---------- Simulation (fixed 60 Hz) ---------- */
+function handleAim() {
+  const t = game.activeTank, fine = input.isDown('ShiftLeft') || input.isDown('ShiftRight') ? 0.25 : 1;
+  const dA = (input.isDown('ArrowLeft') ? 0.6 : 0) - (input.isDown('ArrowRight') ? 0.6 : 0);
+  const dP = (input.isDown('ArrowUp') ? 0.5 : 0) - (input.isDown('ArrowDown') ? 0.5 : 0);
+  if (dA || dP) t.adjust(dA * fine, dP * fine);
+
+  if (input.pointer.down) {                              // drag-to-aim: direction = angle, distance = power
+    const dx = input.pointer.x - t.x, dy = t.y - 13 - input.pointer.y;
+    let ang = (Math.atan2(dy, dx) * 180) / Math.PI;
+    if (ang < 0) ang = dx >= 0 ? 0 : 180;
+    t.angle = ang;
+    t.power = Math.max(5, Math.min(100, Math.hypot(dx, dy) / 1.8));
+  }
+}
+
+function endTurn() {
+  game.tanks.some((t) => !t.alive) ? game.endMatch() : game.nextTurn();
+}
+
+function update() {
+  time++;
+  shake *= 0.9;
+  game.tanks.forEach((t) => t.update(terrain));
+  particles.update();
+
+  switch (game.state) {
+    case STATE.AIMING: handleAim(); break;
+    case STATE.FLYING:
+      for (const p of [...game.projectiles]) p.update(world);
+      game.projectiles = game.projectiles.filter((p) => !p.dead);
+      if (!game.projectiles.length) { game.state = STATE.SETTLING; settleTimer = 0; }
+      break;
+    case STATE.SETTLING:
+      if (++settleTimer > 45 && game.tanks.every((t) => t.grounded)) endTurn();
+      break;
+  }
+}
+
+/* ---------- Rendering ---------- */
+const sky = ctx.createLinearGradient(0, 0, 0, H);
+sky.addColorStop(0, '#16233f');
+sky.addColorStop(1, '#6a8fc2');
+
+function render() {
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  if (shake > 0.3) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+  terrain.draw(ctx);
+  game.tanks.forEach((t) => t.draw(ctx, game.state === STATE.AIMING && t === game.activeTank, time));
+  game.projectiles.forEach((p) => p.draw(ctx));
+  particles.draw(ctx);
+  ctx.restore();
+}
+
+/* ---------- Loop ---------- */
+const STEP = 1000 / 60;
+let last = performance.now(), acc = 0;
+function frame(now) {
+  acc += Math.min(now - last, 100);
+  last = now;
+  while (acc >= STEP) { update(); acc -= STEP; }
+  render();
+  hud.update();
+  requestAnimationFrame(frame);
+}
+
+newMatch();
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
