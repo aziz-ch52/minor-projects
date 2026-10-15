@@ -1,0 +1,182 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0
+}
+
+html,
+body {
+  height: 100%;
+  background: #0b0f19;
+  color: #e8ecf5;
+  font: 600 14px/1.2 system-ui, sans-serif
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px
+}
+
+#stage {
+  position: relative;
+  width: min(100vw, calc((100vh - 30px) * 5 / 3));
+  aspect-ratio: 5/3
+}
+
+canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  border-radius: 6px
+}
+
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 1.2%
+}
+
+.top,
+.bottom {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px
+}
+
+.bottom {
+  align-items: flex-end;
+  justify-content: center;
+  flex-wrap: wrap
+}
+
+.panel,
+.stat,
+.weapons,
+.center {
+  background: rgba(10, 14, 25, .7);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 8px;
+  padding: 6px 10px
+}
+
+.panel {
+  min-width: 150px;
+  display: grid;
+  gap: 4px;
+  opacity: .65
+}
+
+.panel.active {
+  opacity: 1;
+  border-color: #ffd54a
+}
+
+.panel.right {
+  text-align: right
+}
+
+.hp,
+.bar {
+  height: 8px;
+  background: #222a3d;
+  border-radius: 4px;
+  overflow: hidden
+}
+
+.hp i,
+.bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #43d17a, #a4e05a);
+  width: 100%
+}
+
+.bar i {
+  background: linear-gradient(90deg, #ffd54a, #ff5a3c)
+}
+
+.stat {
+  min-width: 110px;
+  display: grid;
+  gap: 4px
+}
+
+.stat b {
+  font-size: 1.3em;
+  color: #ffd54a
+}
+
+.center {
+  text-align: center;
+  display: grid;
+  gap: 3px
+}
+
+.weapons {
+  display: flex;
+  gap: 6px;
+  pointer-events: auto
+}
+
+button {
+  pointer-events: auto;
+  font: inherit;
+  color: inherit;
+  background: #1d2640;
+  border: 1px solid #3a4770;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer
+}
+
+button.on {
+  background: #ffd54a;
+  color: #111;
+  border-color: #ffd54a
+}
+
+#fire {
+  background: #d6402b;
+  border-color: #ff7a5c;
+  padding: 10px 22px;
+  font-weight: 800
+}
+
+#banner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
+  padding: 20px 32px;
+  font-size: 1.6em;
+  text-align: center;
+  background: rgba(0, 0, 0, .8);
+  border: 2px solid #ffd54a;
+  border-radius: 12px;
+  pointer-events: auto;
+  cursor: pointer
+}
+
+#banner[hidden] {
+  display: none
+}
+
+.help {
+  font-size: 12px;
+  opacity: .55;
+  text-align: center;
+  padding: 0 8px
+}
